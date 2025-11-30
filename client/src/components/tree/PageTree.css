@@ -1,0 +1,76 @@
+.page-tree {
+  display: flex;
+  flex-direction: column;
+}
+
+.tree-node {
+  display: flex;
+  flex-direction: column;
+}
+
+.node-content {
+  display: flex;
+  align-items: center;
+  padding: 0.5rem;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background-color 0.2s;
+  user-select: none;
+}
+
+.node-content:hover {
+  background-color: #f3f4f6;
+}
+
+.node-content.active {
+  background-color: #e0e7ff;
+  color: #4338ca;
+  font-weight: 600;
+}
+
+.toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-right: 0.5rem;
+  font-size: 0.75rem;
+  color: #6b7280;
+  transition: transform 0.2s;
+}
+
+.toggle.expanded {
+  transform: rotate(0deg);
+}
+
+.toggle.collapsed {
+  transform: rotate(-90deg);
+}
+
+.node-title {
+  flex: 1;
+  color: #1f2937;
+  font-size: 0.875rem;
+}
+
+.node-content.active .node-title {
+  color: #4338ca;
+}
+
+.children {
+  margin-left: 0.5rem;
+  border-left: 1px solid #e5e7eb;
+  padding-left: 0.5rem;
+}
+
+@media (max-width: 768px) {
+  .node-content {
+    padding: 0.75rem 0.5rem;
+  }
+
+  .node-title {
+    font-size: 0.8125rem;
+  }
+}
+
