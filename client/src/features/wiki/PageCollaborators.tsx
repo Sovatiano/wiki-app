@@ -30,11 +30,11 @@ interface User {
 const PageCollaborators: React.FC = () => {
   const { pageId } = useParams<{ pageId: string }>();
   const user = useSelector((state: RootState) => state.auth.user);
-  const pageIdNum = pageId ? parseInt(pageId) : undefined;
+  const pageIdOrSlug = pageId || undefined;
 
-  const { data: page } = useGetPageQuery(pageIdNum!, { skip: !pageIdNum });
-  const { data: collaborators, isLoading } = useGetCollaboratorsQuery(pageIdNum!, {
-    skip: !pageIdNum,
+  const { data: page } = useGetPageQuery(pageIdOrSlug!, { skip: !pageIdOrSlug });
+  const { data: collaborators, isLoading } = useGetCollaboratorsQuery(pageIdOrSlug!, {
+    skip: !pageIdOrSlug,
   });
   const [addCollaborator, { isLoading: isAdding }] = useAddCollaboratorMutation();
 
@@ -64,11 +64,11 @@ const PageCollaborators: React.FC = () => {
   }, [user, canManageCollaborators]);
 
   const handleAddCollaborator = async () => {
-    if (!selectedUserId || !pageIdNum) return;
+    if (!selectedUserId || !pageIdOrSlug) return;
 
     try {
       await addCollaborator({
-        pageId: pageIdNum,
+        pageId: pageIdOrSlug,
         user_id: parseInt(selectedUserId),
         access_level: accessLevel,
       }).unwrap();

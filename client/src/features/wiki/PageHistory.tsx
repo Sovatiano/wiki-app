@@ -52,11 +52,11 @@ const PageHistory: React.FC = () => {
   const { pageId } = useParams<{ pageId: string }>();
   const navigate = useNavigate();
   const user = useSelector((state: RootState) => state.auth.user);
-  const pageIdNum = pageId ? parseInt(pageId) : undefined;
+  const pageIdOrSlug = pageId || undefined;
 
-  const { data: page } = useGetPageQuery(pageIdNum!, { skip: !pageIdNum });
-  const { data: versions, isLoading, error: queryError } = useGetPageHistoryQuery(pageIdNum!, {
-    skip: !pageIdNum,
+  const { data: page } = useGetPageQuery(pageIdOrSlug!, { skip: !pageIdOrSlug });
+  const { data: versions, isLoading, error: queryError } = useGetPageHistoryQuery(pageIdOrSlug!, {
+    skip: !pageIdOrSlug,
   });
   const [restoreVersion, { isLoading: isRestoring }] = useRestoreVersionMutation();
 
@@ -69,10 +69,10 @@ const PageHistory: React.FC = () => {
       return;
     }
 
-    if (!pageIdNum) return;
+    if (!pageIdOrSlug) return;
 
     try {
-      await restoreVersion({ pageId: pageIdNum, versionId }).unwrap();
+      await restoreVersion({ pageId: pageIdOrSlug, versionId }).unwrap();
       navigate(`/page/${pageId}`);
     } catch (err: any) {
       setError(err.data?.detail || 'Failed to restore version');

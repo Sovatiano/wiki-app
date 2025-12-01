@@ -15,9 +15,17 @@ interface AuthState {
   error: string | null
 }
 
+// Initialize token from localStorage
+const getInitialToken = (): string | null => {
+  if (typeof window !== 'undefined') {
+    return localStorage.getItem('token')
+  }
+  return null
+}
+
 const initialState: AuthState = {
   user: null,
-  token: localStorage.getItem('token'),
+  token: getInitialToken(),
   loading: false,
   error: null,
 }

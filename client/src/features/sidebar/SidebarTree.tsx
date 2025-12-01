@@ -1,11 +1,11 @@
 import React, { useEffect, useState } from 'react';
 import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
-import { fetchPages, setActivePage } from '../wiki/pagesSlice';
+import { setActivePage } from '../wiki/pagesSlice';
+import { useGetPagesQuery } from '../../services/api';
 import { RootState, AppDispatch } from '../../app/store';
 import Button from '../../components/ui/Button';
 import Spinner from '../../components/ui/Spinner';
-import { api } from '../../utils/api';
 import './SidebarTree.css';
 
 interface TreeNode {
@@ -18,7 +18,7 @@ interface TreeNode {
 const SidebarTree: React.FC = () => {
   const dispatch = useDispatch<AppDispatch>();
   const navigate = useNavigate();
-  const { pages, loading } = useSelector((state: RootState) => state.pages);
+  const { data: pagesTree, isLoading: loading } = useGetPagesQuery();
   const user = useSelector((state: RootState) => state.auth.user);
 
   const [treeData, setTreeData] = useState<TreeNode[]>([]);
@@ -26,42 +26,24 @@ const SidebarTree: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
 
   useEffect(() => {
-    dispatch(fetchPages());
-  }, [dispatch]);
-
-  useEffect(() => {
-    buildTree();
-  }, [pages]);
-
-  const buildTree = async () => {
-    try {
-      const response = await api.get('/pages/tree');
-      setTreeData(response.data);
-    } catch (err) {
-      // Fallback to building tree from flat list
-      const tree = buildTreeFromFlat(pages);
-      setTreeData(tree);
+    if (pagesTree && Array.isArray(pagesTree)) {
+      // Convert pages tree from API to TreeNode format
+      const convertToTreeNode = (node: any): TreeNode => ({
+        id: String(node.id),
+        title: node.title,
+        is_public: node.is_public || false,
+        children: node.children && Array.isArray(node.children) && node.children.length > 0
+          ? node.children.map(convertToTreeNode)
+          : undefined,
+      });
+      
+      const convertedTree = pagesTree.map(convertToTreeNode);
+      setTreeData(convertedTree);
+    } else {
+      setTreeData([]);
     }
-  };
+  }, [pagesTree]);
 
-  const buildTreeFromFlat = (flatPages: any[]): TreeNode[] => {
-    const map = new Map();
-    const roots: TreeNode[] = [];
-
-    flatPages.forEach(page => {
-      map.set(page.id, { ...page, children: [] });
-    });
-
-    flatPages.forEach(page => {
-      if (page.parent_id && map.has(page.parent_id)) {
-        map.get(page.parent_id).children.push(map.get(page.id));
-      } else {
-        roots.push(map.get(page.id));
-      }
-    });
-
-    return roots;
-  };
 
   const toggleNode = (id: string) => {
     setExpandedNodes(prev => {
@@ -103,9 +85,8 @@ const SidebarTree: React.FC = () => {
   const renderNode = (node: TreeNode, depth = 0) => {
     const isExpanded = expandedNodes.has(node.id);
     const hasChildren = node.children && node.children.length > 0;
-    const canView = node.is_public || user;
-
-    if (!canView) return null;
+    // Show all pages that are returned from API (API already filters by permissions)
+    // No need to filter here as backend handles access control
 
     return (
       <div key={node.id} className="tree-node">

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { useSelector } from 'react-redux';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { useGetPagesQuery, useGetPopularPagesQuery } from '../../services/api';
+import { useGetPagesQuery, useGetPageQuery } from '../../services/api';
 import { RootState } from '../../app/store';
 import Button from '../ui/Button';
 import Spinner from '../ui/Spinner';
@@ -56,6 +56,31 @@ const PageTreeItem: React.FC<{ page: PageNode; level?: number; onPageClick: (id:
   );
 };
 
+// Component to load and display a recent page
+const RecentPageItem: React.FC<{ pageId: number; onPageClick: (id: number) => void }> = ({ pageId, onPageClick }) => {
+  const { data: page, isLoading } = useGetPageQuery(pageId, { skip: !pageId });
+  
+  if (isLoading) {
+    return <div className="sidebar-page-item">Loading...</div>;
+  }
+  
+  if (!page) {
+    return null;
+  }
+  
+  return (
+    <div
+      className="sidebar-page-item"
+      onClick={() => onPageClick(pageId)}
+    >
+      <span className="page-title">{page.title}</span>
+      {page.like_count > 0 && (
+        <span className="page-likes">❤️ {page.like_count}</span>
+      )}
+    </div>
+  );
+};
+
 // Helper to manage recently visited pages in localStorage
 const getRecentPages = (): number[] => {
   try {
@@ -86,7 +111,6 @@ const Sidebar: React.FC = () => {
   const location = useLocation();
   const user = useSelector((state: RootState) => state.auth.user);
   const { data: pagesTree, isLoading: isLoadingTree } = useGetPagesQuery();
-  const { data: popularPages, isLoading: isLoadingPopular } = useGetPopularPagesQuery();
   
   const [recentPageIds, setRecentPageIds] = useState<number[]>([]);
   const [recentPages, setRecentPages] = useState<any[]>([]);
@@ -101,28 +125,10 @@ const Sidebar: React.FC = () => {
     }
   }, [location]);
 
-  // Load recent pages data
+  // Store recent page IDs - pages will be loaded by RecentPageItem components
   useEffect(() => {
-    if (pagesTree && recentPageIds.length > 0) {
-      const findPageInTree = (tree: any[], targetId: number): any | null => {
-        for (const node of tree) {
-          if (node.id === targetId) return node;
-          if (node.children && node.children.length > 0) {
-            const found = findPageInTree(node.children, targetId);
-            if (found) return found;
-          }
-        }
-        return null;
-      };
-
-      const recent = recentPageIds
-        .map((id) => findPageInTree(pagesTree, id))
-        .filter((page) => page !== null)
-        .slice(0, 5);
-      
-      setRecentPages(recent);
-    }
-  }, [pagesTree, recentPageIds]);
+    setRecentPages(recentPageIds.slice(0, 5).map(id => ({ id })));
+  }, [recentPageIds]);
 
   const handlePageClick = (pageId: number) => {
     navigate(`/page/${pageId}`);
@@ -155,46 +161,13 @@ const Sidebar: React.FC = () => {
                 <h4 className="sidebar-section-title">Recently Visited</h4>
                 <div className="sidebar-pages-list">
                   {recentPages.map((page: any) => (
-                    <div
-                      key={page.id}
-                      className="sidebar-page-item"
-                      onClick={() => handlePageClick(page.id)}
-                    >
-                      <span className="page-title">{page.title}</span>
-                      {page.like_count > 0 && (
-                        <span className="page-likes">❤️ {page.like_count}</span>
-                      )}
-                    </div>
+                    <RecentPageItem key={page.id} pageId={page.id} onPageClick={handlePageClick} />
                   ))}
                 </div>
               </div>
             )}
 
-            {user && isLoadingPopular ? (
-              <div className="sidebar-loading">
-                <Spinner size="small" />
-              </div>
-            ) : user && popularPages && popularPages.length > 0 && (
-              <div className="sidebar-section">
-                <h4 className="sidebar-section-title">Most Popular</h4>
-                <div className="sidebar-pages-list">
-                  {popularPages.map((page: any) => (
-                    <div
-                      key={page.id}
-                      className="sidebar-page-item"
-                      onClick={() => handlePageClick(page.id)}
-                    >
-                      <span className="page-title">{page.title}</span>
-                      {page.like_count > 0 && (
-                        <span className="page-likes">❤️ {page.like_count}</span>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {!user && pagesTree && pagesTree.length > 0 && (
+            {pagesTree && pagesTree.length > 0 && (
               <div className="sidebar-section">
                 <h4 className="sidebar-section-title">All Pages</h4>
                 <div className="tree-container">
@@ -209,13 +182,9 @@ const Sidebar: React.FC = () => {
               </div>
             )}
 
-            {user && (!recentPages || recentPages.length === 0) && (!popularPages || popularPages.length === 0) ? (
+            {(!pagesTree || pagesTree.length === 0) && (
               <div className="no-pages">No pages yet</div>
-            ) : null}
-            
-            {!user && (!pagesTree || pagesTree.length === 0) ? (
-              <div className="no-pages">No pages yet</div>
-            ) : null}
+            )}
           </>
         )}
       </div>

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status, Security
+from fastapi import APIRouter, Depends, HTTPException, status, Security, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 from app.database import get_db
@@ -6,10 +6,12 @@ from app.models.user import User
 from app.models.page import Page
 from app.models.page_version import PageVersion
 from app.models.collaborator import PageCollaborator
+from app.models.page_like import PageLike
 from app.schemas.page import PageCreate, PageUpdate
 from app.schemas.collaborator import CollaboratorCreate
 from app.core.security import get_current_user, decode_access_token
 from typing import List, Optional
+from sqlalchemy import func
 
 router = APIRouter()
 security = HTTPBearer(auto_error=False)
@@ -23,15 +25,28 @@ def get_current_user_optional(
     if not credentials:
         return None
     try:
-        payload = decode_access_token(credentials.credentials)
+        token = credentials.credentials
+        if not token:
+            return None
+        payload = decode_access_token(token)
         if payload is None:
+            # Token is invalid - log but don't fail
+            import logging
+            logging.warning("Failed to decode access token - token may be expired or invalid")
             return None
         username: str = payload.get("sub")
         if username is None:
             return None
         user = db.query(User).filter(User.username == username).first()
+        if user is None:
+            import logging
+            logging.warning(f"User {username} not found in database")
+            return None
         return user
-    except Exception:
+    except Exception as e:
+        # Log error for debugging but don't fail - allow guest access
+        import logging
+        logging.error(f"Error getting current user: {e}", exc_info=True)
         return None
 
 
@@ -85,13 +100,30 @@ def build_page_tree(pages: List[Page], parent_id: Optional[int] = None) -> List[
     return tree
 
 
-@router.get("/")
+def get_page_by_id_or_slug(page_id_or_slug: str, db: Session) -> Optional[Page]:
+    """Get page by ID (int) or slug (str)"""
+    try:
+        page_id = int(page_id_or_slug)
+        return db.query(Page).filter(Page.id == page_id).first()
+    except ValueError:
+        return db.query(Page).filter(Page.slug == page_id_or_slug).first()
+
+
+# Moved to main.py to avoid route conflicts
 def get_pages(
     current_user: Optional[User] = Depends(get_current_user_optional),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    my_only: bool = Query(False, description="Return only pages created by current user")
 ):
     """Get pages in tree structure. For guests: only public pages. For users: accessible pages."""
     from sqlalchemy import or_
+    import logging
+    
+    # Debug logging
+    if current_user:
+        logging.info(f"Getting pages for user: {current_user.username} (role: {current_user.role})")
+    else:
+        logging.info("Getting pages for guest user")
     
     if current_user is None:
         # Guest: only public pages and their children
@@ -99,85 +131,195 @@ def get_pages(
         public_page_ids = {p.id for p in public_pages}
         
         # Recursively include all children of public pages
-        while True:
-            child_pages = db.query(Page).filter(
-                Page.parent_id.in_(public_page_ids),
-                ~Page.id.in_(public_page_ids)
-            ).all()
-            if not child_pages:
-                break
-            for child in child_pages:
-                public_page_ids.add(child.id)
-        
-        pages = db.query(Page).filter(Page.id.in_(public_page_ids)).all()
+        if public_page_ids:
+            while True:
+                child_pages = db.query(Page).filter(
+                    Page.parent_id.in_(public_page_ids),
+                    ~Page.id.in_(public_page_ids)
+                ).all()
+                if not child_pages:
+                    break
+                for child in child_pages:
+                    public_page_ids.add(child.id)
+            
+            pages = db.query(Page).filter(Page.id.in_(public_page_ids)).all()
+        else:
+            pages = []
     elif current_user.role == "admin":
         # Admin: all pages
-        pages = db.query(Page).all()
+        from sqlalchemy.orm import joinedload
+        pages = db.query(Page).options(joinedload(Page.author)).all()
     else:
         # User: public pages, own pages, and pages where user is collaborator
-        # Get page IDs where user is collaborator
-        collaborator_page_ids = db.query(PageCollaborator.page_id).filter(
-            PageCollaborator.user_id == current_user.id
-        ).subquery()
-        
-        # Get accessible pages
-        accessible_pages = db.query(Page).filter(
-            or_(
-                Page.is_public == True,
-                Page.author_id == current_user.id,
-                Page.id.in_(db.query(collaborator_page_ids.c.page_id))
-            )
-        ).all()
-        
-        # Also include child pages of accessible pages (even if child itself is not directly accessible)
-        accessible_page_ids = {p.id for p in accessible_pages}
-        child_pages = db.query(Page).filter(
-            Page.parent_id.in_(accessible_page_ids)
-        ).all()
-        
-        # Combine and remove duplicates by ID
-        all_page_ids = accessible_page_ids.copy()
-        for child in child_pages:
-            all_page_ids.add(child.id)
-        
-        # Also recursively include grandchildren, etc.
-        # Keep adding children until no new ones are found
-        while True:
-            new_child_pages = db.query(Page).filter(
-                Page.parent_id.in_(all_page_ids),
-                ~Page.id.in_(all_page_ids)
-            ).all()
-            if not new_child_pages:
-                break
-            for child in new_child_pages:
-                all_page_ids.add(child.id)
-        
-        # Get all pages by IDs
-        pages = db.query(Page).filter(Page.id.in_(all_page_ids)).all()
+        try:
+            # If my_only is True, return only pages created by current user
+            if my_only:
+                pages = db.query(Page).options(joinedload(Page.author)).filter(
+                    Page.author_id == current_user.id
+                ).all()
+                logging.info(f"User {current_user.id} ({current_user.username}): found {len(pages)} own pages (my_only=True)")
+            else:
+                # Get page IDs where user is collaborator
+                collaborator_page_ids_query = db.query(PageCollaborator.page_id).filter(
+                    PageCollaborator.user_id == current_user.id
+                )
+                collaborator_page_ids = [row[0] for row in collaborator_page_ids_query.all()]
+                
+                # Get accessible pages - use simpler query
+                # User should see: public pages OR own pages OR pages where user is collaborator
+                access_conditions = [
+                    Page.is_public == True,
+                    Page.author_id == current_user.id
+                ]
+                
+                # Add collaborator condition only if user has collaborations
+                if collaborator_page_ids:
+                    access_conditions.append(Page.id.in_(collaborator_page_ids))
+                
+                # Debug: check how many public pages exist
+                public_count = db.query(Page).filter(Page.is_public == True).count()
+                own_count = db.query(Page).filter(Page.author_id == current_user.id).count()
+                logging.info(f"Debug - Public pages in DB: {public_count}, Own pages: {own_count}, Collaborator pages: {len(collaborator_page_ids)}")
+                
+                # Use joinedload to eagerly load author relationship
+                from sqlalchemy.orm import joinedload
+                accessible_pages = db.query(Page).options(joinedload(Page.author)).filter(
+                    or_(*access_conditions)
+                ).all()
+                
+                logging.info(f"User {current_user.id} ({current_user.username}): found {len(accessible_pages)} accessible pages (public: {sum(1 for p in accessible_pages if p.is_public)}, own: {sum(1 for p in accessible_pages if p.author_id == current_user.id)}, collaborators: {len(collaborator_page_ids)})")
+                
+                # Also include child pages of accessible pages (even if child itself is not directly accessible)
+                accessible_page_ids = {p.id for p in accessible_pages}
+                
+                # Recursively include all children
+                if accessible_page_ids:
+                    while True:
+                        child_pages = db.query(Page).filter(
+                            Page.parent_id.in_(accessible_page_ids),
+                            ~Page.id.in_(accessible_page_ids)
+                        ).all()
+                        if not child_pages:
+                            break
+                        for child in child_pages:
+                            accessible_page_ids.add(child.id)
+                    
+                    # Get all pages by IDs with author relationship loaded
+                    from sqlalchemy.orm import joinedload
+                    pages = db.query(Page).options(joinedload(Page.author)).filter(Page.id.in_(accessible_page_ids)).all()
+                    logging.info(f"After including children: {len(pages)} total pages for user {current_user.id}")
+                else:
+                    pages = []
+                    logging.warning(f"No accessible pages found for user {current_user.id} ({current_user.username})")
+        except Exception as e:
+            logging.error(f"Error getting pages for user {current_user.id}: {e}", exc_info=True)
+            # Fallback to empty list on error
+            pages = []
 
     # Build tree structure - only show root pages (parent_id is None)
-    # Include like counts in tree
-    user_id = current_user.id if current_user else None
-    def build_tree_with_likes(pages_list, parent_id=None):
-        tree = []
-        for page in pages_list:
-            if page.parent_id == parent_id:
-                node = page.to_dict(include_like_count=True, db=db, user_id=user_id)
-                node["children"] = build_tree_with_likes(pages_list, page.id)
-                tree.append(node)
+    # According to architecture: [{"id": "uuid", "title": "string", "children": [...], "is_public": bool}, ...]
+    try:
+        logging.info(f"Building tree from {len(pages)} pages")
+        user_id = current_user.id if current_user else None
+        def build_tree_with_likes(pages_list, parent_id=None):
+            tree = []
+            for page in pages_list:
+                if page.parent_id == parent_id:
+                    # Simplified structure for tree view
+                    node = {
+                        "id": page.id,
+                        "title": page.title,
+                        "is_public": page.is_public,
+                        "author_id": page.author_id,
+                        "children": build_tree_with_likes(pages_list, page.id)
+                    }
+                    # Debug: log author_id
+                    logging.debug(f"Page {page.id} ({page.title}): author_id={page.author_id}")
+                    # Add like count if available
+                    try:
+                        if db:
+                            from app.models.page_like import PageLike
+                            like_count = db.query(PageLike).filter(PageLike.page_id == page.id).count()
+                            if like_count > 0:
+                                node["like_count"] = like_count
+                    except Exception as e:
+                        logging.warning(f"Error getting like count for page {page.id}: {e}")
+                    tree.append(node)
+            return tree
+        
+        tree = build_tree_with_likes(pages, None)
+        logging.info(f"Built tree with {len(tree)} root nodes from {len(pages)} total pages")
+        
+        # Debug: log page IDs and their parent_ids
+        if pages:
+            page_info = [(p.id, p.title[:30], p.parent_id) for p in pages[:10]]
+            logging.info(f"Sample pages: {page_info}")
+        
         return tree
+    except Exception as e:
+        logging.error(f"Error building page tree: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error building page tree: {str(e)}")
+
+
+def get_my_pages(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """Get only pages created by the current user in tree structure."""
+    import logging
+    from sqlalchemy.orm import joinedload
     
-    tree = build_tree_with_likes(pages, None)
-    return tree
+    logging.info(f"Getting own pages for user: {current_user.username} (id: {current_user.id})")
+    
+    # Get only pages created by current user
+    pages = db.query(Page).options(joinedload(Page.author)).filter(
+        Page.author_id == current_user.id
+    ).all()
+    
+    logging.info(f"Found {len(pages)} pages created by user {current_user.id}")
+    
+    # Build tree structure - only show root pages (parent_id is None)
+    try:
+        def build_tree_with_likes(pages_list, parent_id=None):
+            tree = []
+            for page in pages_list:
+                if page.parent_id == parent_id:
+                    # Simplified structure for tree view
+                    node = {
+                        "id": page.id,
+                        "title": page.title,
+                        "is_public": page.is_public,
+                        "author_id": page.author_id,
+                        "children": build_tree_with_likes(pages_list, page.id)
+                    }
+                    # Add like count if available
+                    try:
+                        if db:
+                            from app.models.page_like import PageLike
+                            like_count = db.query(PageLike).filter(PageLike.page_id == page.id).count()
+                            if like_count > 0:
+                                node["like_count"] = like_count
+                    except Exception as e:
+                        logging.warning(f"Error getting like count for page {page.id}: {e}")
+                    tree.append(node)
+            return tree
+        
+        tree = build_tree_with_likes(pages, None)
+        logging.info(f"Built tree with {len(tree)} root nodes from {len(pages)} total pages")
+        
+        return tree
+    except Exception as e:
+        logging.error(f"Error building page tree: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error building page tree: {str(e)}")
 
 
-@router.get("/{page_id}")
+@router.get("/{page_id_or_slug}")
 def get_page(
-    page_id: int,
+    page_id_or_slug: str,
     current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db)
 ):
-    page = db.query(Page).filter(Page.id == page_id).first()
+    page = get_page_by_id_or_slug(page_id_or_slug, db)
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
 
@@ -188,7 +330,7 @@ def get_page(
     return page.to_dict(include_like_count=True, db=db, user_id=user_id)
 
 
-@router.post("/")
+# Moved to main.py to avoid route conflicts
 def create_page(page: PageCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     # If creating a child page, check permissions
     if page.parent_id:
@@ -232,12 +374,12 @@ def create_page(page: PageCreate, current_user: User = Depends(get_current_user)
 
 @router.put("/{page_id}")
 def update_page(
-    page_id: int,
+    page_id: str,
     page: PageUpdate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    db_page = db.query(Page).filter(Page.id == page_id).first()
+    db_page = get_page_by_id_or_slug(page_id, db)
     if not db_page:
         raise HTTPException(status_code=404, detail="Page not found")
 
@@ -267,7 +409,7 @@ def update_page(
     if new_slug != db_page.slug:
         counter = 1
         base_slug = new_slug
-        while db.query(Page).filter(Page.slug == new_slug, Page.id != page_id).first():
+        while db.query(Page).filter(Page.slug == new_slug, Page.id != db_page.id).first():
             new_slug = f"{base_slug}-{counter}"
             counter += 1
         db_page.slug = new_slug
@@ -278,13 +420,13 @@ def update_page(
     return db_page.to_dict()
 
 
-@router.delete("/{page_id}")
+@router.delete("/{page_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_page(
-    page_id: int,
+    page_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    db_page = db.query(Page).filter(Page.id == page_id).first()
+    db_page = get_page_by_id_or_slug(page_id, db)
     if not db_page:
         raise HTTPException(status_code=404, detail="Page not found")
 
@@ -295,24 +437,25 @@ def delete_page(
     db.delete(db_page)
     db.commit()
 
-    return {"message": "Page deleted successfully"}
+    return None
 
 
 @router.get("/{page_id}/history")
 def get_page_history(
-    page_id: int,
-    current_user: User = Depends(get_current_user),
+    page_id: str,
+    current_user: Optional[User] = Depends(get_current_user_optional),
     db: Session = Depends(get_db)
 ):
-    page = db.query(Page).filter(Page.id == page_id).first()
+    page = get_page_by_id_or_slug(page_id, db)
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
 
+    # History requires read access (can_access_page checks read permissions)
     if not can_access_page(page, current_user, db):
         raise HTTPException(status_code=403, detail="Not authorized")
 
     versions = db.query(PageVersion).filter(
-        PageVersion.page_id == page_id
+        PageVersion.page_id == page.id
     ).order_by(PageVersion.created_at.desc()).all()
 
     return [
@@ -334,12 +477,12 @@ def get_page_history(
 
 @router.post("/{page_id}/restore/{version_id}")
 def restore_version(
-    page_id: int,
+    page_id: str,
     version_id: int,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    page = db.query(Page).filter(Page.id == page_id).first()
+    page = get_page_by_id_or_slug(page_id, db)
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
 
@@ -374,13 +517,14 @@ def restore_version(
     return {"message": "Version restored", "page": page.to_dict()}
 
 
+# Moved to main.py to avoid route conflicts
 @router.get("/{page_id}/collaborators")
 def get_collaborators(
-    page_id: int,
+    page_id: str,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    page = db.query(Page).filter(Page.id == page_id).first()
+    page = get_page_by_id_or_slug(page_id, db)
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
 
@@ -388,7 +532,7 @@ def get_collaborators(
         raise HTTPException(status_code=403, detail="Not authorized")
 
     collaborators = db.query(PageCollaborator).filter(
-        PageCollaborator.page_id == page_id
+        PageCollaborator.page_id == page.id
     ).all()
 
     return [
@@ -408,12 +552,12 @@ def get_collaborators(
 
 @router.post("/{page_id}/collaborators")
 def add_collaborator(
-    page_id: int,
+    page_id: str,
     collaborator_data: CollaboratorCreate,
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    page = db.query(Page).filter(Page.id == page_id).first()
+    page = get_page_by_id_or_slug(page_id, db)
     if not page:
         raise HTTPException(status_code=404, detail="Page not found")
 
@@ -430,7 +574,7 @@ def add_collaborator(
 
     # Check if already a collaborator
     existing = db.query(PageCollaborator).filter(
-        PageCollaborator.page_id == page_id,
+        PageCollaborator.page_id == page.id,
         PageCollaborator.user_id == collaborator_data.user_id
     ).first()
 
@@ -441,7 +585,7 @@ def add_collaborator(
 
     # Create new collaborator
     collaborator = PageCollaborator(
-        page_id=page_id,
+        page_id=page.id,
         user_id=collaborator_data.user_id,
         access_level=collaborator_data.access_level
     )

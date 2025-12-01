@@ -11,7 +11,7 @@ const Search: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('')
   const navigate = useNavigate()
 
-  const { data: results, isLoading } = useSearchPagesQuery(searchTerm, {
+  const { data: results, isLoading, error } = useSearchPagesQuery(searchTerm, {
     skip: !searchTerm || searchTerm.length < 1,
   })
 
@@ -50,10 +50,29 @@ const Search: React.FC = () => {
         </div>
       )}
 
-      {searchTerm && results && (
+      {error && (
+        <div className="search-error">
+          <p>Error searching pages. Please try again.</p>
+          <p style={{ fontSize: '0.9em', color: '#666' }}>
+            {error.status === 'FETCH_ERROR' 
+              ? 'Unable to connect to server. Please check if the backend is running.'
+              : 'An error occurred while searching.'}
+          </p>
+          {process.env.NODE_ENV === 'development' && (
+            <details style={{ marginTop: '1rem' }}>
+              <summary>Error details</summary>
+              <pre style={{ fontSize: '0.8em', overflow: 'auto' }}>
+                {JSON.stringify(error, null, 2)}
+              </pre>
+            </details>
+          )}
+        </div>
+      )}
+
+      {searchTerm && !isLoading && !error && (
         <div className="search-results">
           <h2>Results for "{searchTerm}"</h2>
-          {results.length === 0 ? (
+          {!results || results.length === 0 ? (
             <div className="no-results">No pages found</div>
           ) : (
             <div className="results-list">
@@ -65,12 +84,12 @@ const Search: React.FC = () => {
                 >
                   <h3>{result.page.title}</h3>
                   <p className="result-meta">
-                    By {result.page.author.username} •{' '}
+                    By {result.page.author?.username || 'Unknown'} •{' '}
                     {new Date(result.page.created_at).toLocaleDateString()}
                   </p>
                   <div
                     className="result-preview"
-                    dangerouslySetInnerHTML={{ __html: result.highlight.content }}
+                    dangerouslySetInnerHTML={{ __html: result.highlight?.content || '' }}
                   />
                 </div>
               ))}

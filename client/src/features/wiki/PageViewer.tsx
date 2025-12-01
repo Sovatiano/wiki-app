@@ -21,22 +21,23 @@ const PageViewer: React.FC = () => {
   const { pageId } = useParams<{ pageId: string }>();
   const user = useSelector((state: RootState) => state.auth.user);
   
-  const pageIdNum = pageId ? parseInt(pageId) : undefined;
-  const { data: page, isLoading, error } = useGetPageQuery(pageIdNum!, { skip: !pageIdNum });
+  // Support both numeric ID and slug
+  const pageIdOrSlug = pageId || undefined;
+  const { data: page, isLoading, error } = useGetPageQuery(pageIdOrSlug!, { skip: !pageIdOrSlug });
   const { data: pagesTree } = useGetPagesQuery();
-  const { data: collaborators } = useGetCollaboratorsQuery(pageIdNum!, { skip: !pageIdNum || !user });
-  const { data: likesData } = useGetPageLikesQuery(pageIdNum!, { skip: !pageIdNum || !user });
+  const { data: collaborators } = useGetCollaboratorsQuery(pageIdOrSlug!, { skip: !pageIdOrSlug || !user });
+  const { data: likesData } = useGetPageLikesQuery(pageIdOrSlug!, { skip: !pageIdOrSlug || !user });
   const [likePage] = useLikePageMutation();
   const [unlikePage] = useUnlikePageMutation();
 
   // Track page visit
   useEffect(() => {
-    if (pageIdNum) {
+    if (page && page.id) {
       const recent = JSON.parse(localStorage.getItem('recentPages') || '[]');
-      const updated = [pageIdNum, ...recent.filter((id: number) => id !== pageIdNum)].slice(0, 5);
+      const updated = [page.id, ...recent.filter((id: number) => id !== page.id)].slice(0, 5);
       localStorage.setItem('recentPages', JSON.stringify(updated));
     }
-  }, [pageIdNum]);
+  }, [page]);
 
   // Find page by ID in tree
   const findPageInTree = (tree: any[], targetId: number): any | null => {
@@ -55,9 +56,9 @@ const PageViewer: React.FC = () => {
     : null;
 
   // Find child pages
-  const childPages = pagesTree 
+  const childPages = pagesTree && page
     ? (() => {
-        const currentPage = findPageInTree(pagesTree, pageIdNum!);
+        const currentPage = findPageInTree(pagesTree, page.id);
         return currentPage?.children || [];
       })()
     : [];
@@ -87,12 +88,12 @@ const PageViewer: React.FC = () => {
   };
 
   const handleLike = async () => {
-    if (!pageIdNum || !user) return;
+    if (!pageIdOrSlug || !user) return;
     try {
       if (likesData?.user_liked) {
-        await unlikePage(pageIdNum).unwrap();
+        await unlikePage(pageIdOrSlug).unwrap();
       } else {
-        await likePage(pageIdNum).unwrap();
+        await likePage(pageIdOrSlug).unwrap();
       }
     } catch (err) {
       console.error('Failed to toggle like:', err);

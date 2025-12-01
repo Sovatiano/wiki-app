@@ -1,5 +1,5 @@
 from logging.config import fileConfig
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import engine_from_config, pool, create_engine
 from alembic import context
 import os
 import sys
@@ -11,11 +11,17 @@ from app.database import Base
 from app.core.config import settings
 from app.models import user, page, version, collaborator
 
+# Set UTF-8 encoding for Windows
+if sys.platform == 'win32':
+    os.environ['PGCLIENTENCODING'] = 'UTF8'
+
 # this is the Alembic Config object
 config = context.config
 
 # Override sqlalchemy.url from config
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
+# Use create_engine directly to avoid encoding issues
+database_url = settings.DATABASE_URL
+config.set_main_option("sqlalchemy.url", database_url)
 
 # Interpret the config file for Python logging
 if config.config_file_name is not None:
@@ -39,10 +45,12 @@ def run_migrations_offline() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section),
-        prefix="sqlalchemy.",
+    # Use create_engine directly with explicit encoding to avoid Windows encoding issues
+    database_url = settings.DATABASE_URL
+    connectable = create_engine(
+        database_url,
         poolclass=pool.NullPool,
+        connect_args={'client_encoding': 'utf8'}
     )
 
     with connectable.connect() as connection:

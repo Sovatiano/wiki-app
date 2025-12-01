@@ -28,11 +28,11 @@ const PageEditor: React.FC = () => {
   const navigate = useNavigate();
 
   const user = useSelector((state: RootState) => state.auth.user);
-  const pageIdNum = pageId ? parseInt(pageId) : undefined;
+  const pageIdOrSlug = pageId || undefined;
   const parentIdFromUrl = searchParams.get('parent');
   const parentIdNum = parentIdFromUrl ? parseInt(parentIdFromUrl) : null;
 
-  const { data: page, isLoading } = useGetPageQuery(pageIdNum!, { skip: !pageIdNum });
+  const { data: page, isLoading } = useGetPageQuery(pageIdOrSlug!, { skip: !pageIdOrSlug });
   const { data: pagesTree } = useGetPagesQuery();
   const [createPage, { isLoading: isCreating }] = useCreatePageMutation();
   const [updatePage, { isLoading: isUpdating }] = useUpdatePageMutation();
@@ -70,9 +70,9 @@ const PageEditor: React.FC = () => {
     setError('');
 
     try {
-      if (isEditMode && pageIdNum) {
+      if (isEditMode && pageIdOrSlug) {
         await updatePage({
-          id: pageIdNum,
+          id: pageIdOrSlug,
           title,
           content,
           version_comment: versionComment || undefined,
@@ -148,7 +148,7 @@ const PageEditor: React.FC = () => {
               >
                 <option value="">None (Top-level page)</option>
                 {flatPages
-                  .filter((p) => !pageIdNum || p.id !== pageIdNum) // Don't allow selecting self as parent
+                  .filter((p) => !page || p.id !== page.id) // Don't allow selecting self as parent
                   .map((p) => (
                     <option key={p.id} value={p.id}>
                       {p.displayTitle}
