@@ -18,8 +18,13 @@ interface TreeNode {
 const SidebarTree: React.FC = () => {
   const dispatch = useDispatch<AppDispatch>();
   const navigate = useNavigate();
-  const { data: pagesTree, isLoading: loading } = useGetPagesQuery();
+  const { data: pagesTree, isLoading: loading, refetch } = useGetPagesQuery();
   const user = useSelector((state: RootState) => state.auth.user);
+
+  // Refetch pages when user changes (e.g., after login)
+  useEffect(() => {
+    refetch();
+  }, [user, refetch]);
 
   const [treeData, setTreeData] = useState<TreeNode[]>([]);
   const [expandedNodes, setExpandedNodes] = useState<Set<string>>(new Set());

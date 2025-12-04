@@ -30,14 +30,15 @@ const PageViewer: React.FC = () => {
   const [likePage] = useLikePageMutation();
   const [unlikePage] = useUnlikePageMutation();
 
-  // Track page visit
+  // Track page visit (per user)
   useEffect(() => {
-    if (page && page.id) {
-      const recent = JSON.parse(localStorage.getItem('recentPages') || '[]');
+    if (page && page.id && user) {
+      const key = `recentPages_${user.id}`;
+      const recent = JSON.parse(localStorage.getItem(key) || '[]');
       const updated = [page.id, ...recent.filter((id: number) => id !== page.id)].slice(0, 5);
-      localStorage.setItem('recentPages', JSON.stringify(updated));
+      localStorage.setItem(key, JSON.stringify(updated));
     }
-  }, [page]);
+  }, [page, user]);
 
   // Find page by ID in tree
   const findPageInTree = (tree: any[], targetId: number): any | null => {

@@ -96,10 +96,11 @@ from app.models.user import User
 @app.api_route("/api/pages/", methods=["GET"], tags=["pages"])
 def get_pages_endpoint(
     current_user: Optional[User] = Depends(pages_get_current_user_optional),
-    db = Depends(get_db)
+    db = Depends(get_db),
+    my_only: bool = Query(False, description="Return only pages created by current user")
 ):
-    logging.info("GET /api/pages called")
-    return get_pages(current_user, db)
+    logging.info(f"GET /api/pages called, my_only={my_only}")
+    return get_pages(current_user, db, my_only)
 
 # Register POST /api/pages endpoint
 @app.api_route("/api/pages", methods=["POST"], tags=["pages"])

@@ -3,6 +3,7 @@ import { useDispatch, useSelector } from 'react-redux';
 import { useNavigate, Link } from 'react-router-dom';
 import { login, fetchCurrentUser } from './authSlice';
 import { RootState, AppDispatch } from '../../app/store';
+import { api } from '../../services/api';
 import Button from '../../components/ui/Button';
 import Input from '../../components/ui/Input';
 import Spinner from '../../components/ui/Spinner';
@@ -27,6 +28,8 @@ const Login: React.FC = () => {
       await dispatch(login({ username, password })).unwrap();
       // Fetch user data after login
       await dispatch(fetchCurrentUser()).unwrap();
+      // Invalidate pages cache to refresh data after login
+      dispatch(api.util.invalidateTags(['Pages']));
       navigate('/');
     } catch (error) {
       // Error handled by slice

@@ -11,6 +11,7 @@ interface PageNode {
   id: number;
   title: string;
   children?: PageNode[];
+  like_count?: number;
 }
 
 const PageTreeItem: React.FC<{ page: PageNode; level?: number; onPageClick: (id: number) => void }> = ({
@@ -39,17 +40,26 @@ const PageTreeItem: React.FC<{ page: PageNode; level?: number; onPageClick: (id:
           </button>
         )}
         <span className="tree-title">{page.title}</span>
+        {(page.like_count !== undefined && page.like_count > 0) && (
+          <span className="tree-likes">❤️ {page.like_count}</span>
+        )}
       </div>
       {expanded && page.children && page.children.length > 0 && (
         <div className="tree-children">
-          {page.children.map((child) => (
-            <PageTreeItem
-              key={child.id}
-              page={child}
-              level={level + 1}
-              onPageClick={onPageClick}
-            />
-          ))}
+          {[...page.children]
+            .sort((a: PageNode, b: PageNode) => {
+              const aLikes = a.like_count || 0;
+              const bLikes = b.like_count || 0;
+              return bLikes - aLikes; // Sort by likes descending
+            })
+            .map((child) => (
+              <PageTreeItem
+                key={child.id}
+                page={child}
+                level={level + 1}
+                onPageClick={onPageClick}
+              />
+            ))}
         </div>
       )}
     </div>
@@ -74,33 +84,38 @@ const RecentPageItem: React.FC<{ pageId: number; onPageClick: (id: number) => vo
       onClick={() => onPageClick(pageId)}
     >
       <span className="page-title">{page.title}</span>
-      {page.like_count > 0 && (
-        <span className="page-likes">❤️ {page.like_count}</span>
-      )}
     </div>
   );
 };
 
-// Helper to manage recently visited pages in localStorage
-const getRecentPages = (): number[] => {
+// Helper to manage recently visited pages in localStorage (per user)
+const getRecentPagesKey = (userId: number | string | null): string => {
+  if (!userId) return 'recentPages_guest';
+  return `recentPages_${userId}`;
+};
+
+const getRecentPages = (userId: number | string | null): number[] => {
   try {
-    const recent = localStorage.getItem('recentPages');
+    const key = getRecentPagesKey(userId);
+    const recent = localStorage.getItem(key);
     return recent ? JSON.parse(recent) : [];
   } catch {
     return [];
   }
 };
 
-const addRecentPage = (pageId: number) => {
+const addRecentPage = (pageId: number, userId: number | string | null) => {
   try {
-    let recent = getRecentPages();
+    if (!userId) return; // Don't track for guests
+    const key = getRecentPagesKey(userId);
+    let recent = getRecentPages(userId);
     // Remove if already exists
     recent = recent.filter((id: number) => id !== pageId);
     // Add to beginning
     recent.unshift(pageId);
     // Keep only last 5
     recent = recent.slice(0, 5);
-    localStorage.setItem('recentPages', JSON.stringify(recent));
+    localStorage.setItem(key, JSON.stringify(recent));
   } catch {
     // Ignore errors
   }
@@ -115,15 +130,26 @@ const Sidebar: React.FC = () => {
   const [recentPageIds, setRecentPageIds] = useState<number[]>([]);
   const [recentPages, setRecentPages] = useState<any[]>([]);
 
+  // Load recent pages for current user
+  useEffect(() => {
+    if (user) {
+      const recent = getRecentPages(user.id);
+      setRecentPageIds(recent);
+    } else {
+      setRecentPageIds([]);
+    }
+  }, [user]);
+
   // Track page visits
   useEffect(() => {
+    if (!user) return; // Don't track for guests
     const pageIdMatch = location.pathname.match(/\/page\/(\d+)/);
     if (pageIdMatch) {
       const pageId = parseInt(pageIdMatch[1]);
-      addRecentPage(pageId);
-      setRecentPageIds(getRecentPages());
+      addRecentPage(pageId, user.id);
+      setRecentPageIds(getRecentPages(user.id));
     }
-  }, [location]);
+  }, [location, user]);
 
   // Store recent page IDs - pages will be loaded by RecentPageItem components
   useEffect(() => {
@@ -171,13 +197,19 @@ const Sidebar: React.FC = () => {
               <div className="sidebar-section">
                 <h4 className="sidebar-section-title">All Pages</h4>
                 <div className="tree-container">
-                  {pagesTree.map((page: PageNode) => (
-                    <PageTreeItem
-                      key={page.id}
-                      page={page}
-                      onPageClick={handlePageClick}
-                    />
-                  ))}
+                  {[...pagesTree]
+                    .sort((a: PageNode, b: PageNode) => {
+                      const aLikes = a.like_count || 0;
+                      const bLikes = b.like_count || 0;
+                      return bLikes - aLikes; // Sort by likes descending
+                    })
+                    .map((page: PageNode) => (
+                      <PageTreeItem
+                        key={page.id}
+                        page={page}
+                        onPageClick={handlePageClick}
+                      />
+                    ))}
                 </div>
               </div>
             )}

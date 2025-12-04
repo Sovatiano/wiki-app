@@ -1,4 +1,4 @@
-import React, { useMemo } from 'react';
+import React, { useMemo, useEffect } from 'react';
 import { useSelector } from 'react-redux';
 import { useNavigate } from 'react-router-dom';
 import { useGetMyPagesQuery, useGetPagesQuery } from '../../services/api';
@@ -11,10 +11,17 @@ const HomePage: React.FC = () => {
   const navigate = useNavigate();
   const user = useSelector((state: RootState) => state.auth.user);
   // For authenticated users, get only their pages using my_only parameter
-  const { data: pagesTree, isLoading } = useGetPagesQuery(
+  const { data: pagesTree, isLoading, refetch } = useGetPagesQuery(
     user ? { myOnly: true } : undefined,
     { skip: false }
   );
+
+  // Refetch pages when user changes (e.g., after login)
+  useEffect(() => {
+    if (user) {
+      refetch();
+    }
+  }, [user, refetch]);
 
   // Get root pages
   const rootPages = useMemo(() => {
@@ -33,41 +40,44 @@ const HomePage: React.FC = () => {
     );
   }
 
+  // Check if user has pages
+  const hasPages = rootPages && rootPages.length > 0;
+
   return (
     <div className="home-page">
-      <div className="home-header">
-        <h1>Добро пожаловать в WikiApp</h1>
-        {user && (
-          <Button variant="primary" onClick={() => navigate('/page/new')}>
-            Создать страницу
-          </Button>
-        )}
-      </div>
-
-      {rootPages && rootPages.length > 0 ? (
-        <div className="home-section">
-          <h2>{user ? 'Мои страницы' : 'Публичные страницы'}</h2>
-          <div className="pages-grid">
-            {rootPages.map((page: any) => (
-              <div
-                key={page.id}
-                className="page-card"
-                onClick={() => navigate(`/page/${page.id}`)}
-              >
-                {page.like_count > 0 && (
-                  <span className="page-likes-badge">❤️ {page.like_count}</span>
-                )}
-                <h3>{page.title}</h3>
-                <p className="page-meta">
-                  {page.is_public ? 'Публичная' : 'Приватная'}
-                  {page.children && page.children.length > 0 && (
-                    <> • {page.children.length} подстраниц</>
-                  )}
-                </p>
-              </div>
-            ))}
+      {hasPages ? (
+        <>
+          <div className="home-header">
+            <h1>{user ? 'Мои страницы' : 'Публичные страницы'}</h1>
+            {user && (
+              <Button variant="primary" onClick={() => navigate('/page/new')}>
+                Создать страницу
+              </Button>
+            )}
           </div>
-        </div>
+          <div className="home-section">
+            <div className="pages-grid">
+              {rootPages.map((page: any) => (
+                <div
+                  key={page.id}
+                  className="page-card"
+                  onClick={() => navigate(`/page/${page.id}`)}
+                >
+                  {page.like_count > 0 && (
+                    <span className="page-likes-badge">❤️ {page.like_count}</span>
+                  )}
+                  <h3>{page.title}</h3>
+                  <p className="page-meta">
+                    {page.is_public ? 'Публичная' : 'Приватная'}
+                    {page.children && page.children.length > 0 && (
+                      <> • {page.children.length} подстраниц</>
+                    )}
+                  </p>
+                </div>
+              ))}
+            </div>
+          </div>
+        </>
       ) : (
         !isLoading && (
           <div className="home-empty">

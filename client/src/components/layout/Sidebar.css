@@ -77,6 +77,13 @@
   font-size: 0.875rem;
 }
 
+.tree-likes {
+  color: #ef4444;
+  font-size: 0.75rem;
+  margin-left: 0.5rem;
+  flex-shrink: 0;
+}
+
 .tree-children {
   margin-left: 0.5rem;
 }

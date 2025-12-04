@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status, Security, Query
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
+from sqlalchemy import func, or_
 from app.database import get_db
 from app.models.user import User
 from app.models.page import Page
@@ -11,7 +12,7 @@ from app.schemas.page import PageCreate, PageUpdate
 from app.schemas.collaborator import CollaboratorCreate
 from app.core.security import get_current_user, decode_access_token
 from typing import List, Optional
-from sqlalchemy import func
+import logging
 
 router = APIRouter()
 security = HTTPBearer(auto_error=False)
@@ -116,12 +117,10 @@ def get_pages(
     my_only: bool = Query(False, description="Return only pages created by current user")
 ):
     """Get pages in tree structure. For guests: only public pages. For users: accessible pages."""
-    from sqlalchemy import or_
-    import logging
     
     # Debug logging
     if current_user:
-        logging.info(f"Getting pages for user: {current_user.username} (role: {current_user.role})")
+        logging.info(f"Getting pages for user: {current_user.username} (id: {current_user.id}, role: {current_user.role}), my_only={my_only}")
     else:
         logging.info("Getting pages for guest user")
     
@@ -147,7 +146,6 @@ def get_pages(
             pages = []
     elif current_user.role == "admin":
         # Admin: all pages
-        from sqlalchemy.orm import joinedload
         pages = db.query(Page).options(joinedload(Page.author)).all()
     else:
         # User: public pages, own pages, and pages where user is collaborator
@@ -157,7 +155,11 @@ def get_pages(
                 pages = db.query(Page).options(joinedload(Page.author)).filter(
                     Page.author_id == current_user.id
                 ).all()
-                logging.info(f"User {current_user.id} ({current_user.username}): found {len(pages)} own pages (my_only=True)")
+                # Verify that all pages belong to current user
+                for page in pages:
+                    if page.author_id != current_user.id:
+                        logging.error(f"ERROR: Page {page.id} has author_id {page.author_id}, but current user is {current_user.id}")
+                logging.info(f"User {current_user.id} ({current_user.username}): found {len(pages)} own pages (my_only=True). Page IDs: {[p.id for p in pages]}")
             else:
                 # Get page IDs where user is collaborator
                 collaborator_page_ids_query = db.query(PageCollaborator.page_id).filter(
@@ -182,7 +184,6 @@ def get_pages(
                 logging.info(f"Debug - Public pages in DB: {public_count}, Own pages: {own_count}, Collaborator pages: {len(collaborator_page_ids)}")
                 
                 # Use joinedload to eagerly load author relationship
-                from sqlalchemy.orm import joinedload
                 accessible_pages = db.query(Page).options(joinedload(Page.author)).filter(
                     or_(*access_conditions)
                 ).all()
@@ -205,7 +206,6 @@ def get_pages(
                             accessible_page_ids.add(child.id)
                     
                     # Get all pages by IDs with author relationship loaded
-                    from sqlalchemy.orm import joinedload
                     pages = db.query(Page).options(joinedload(Page.author)).filter(Page.id.in_(accessible_page_ids)).all()
                     logging.info(f"After including children: {len(pages)} total pages for user {current_user.id}")
                 else:
@@ -235,15 +235,15 @@ def get_pages(
                     }
                     # Debug: log author_id
                     logging.debug(f"Page {page.id} ({page.title}): author_id={page.author_id}")
-                    # Add like count if available
+                    # Add like count (always include, even if 0)
                     try:
                         if db:
                             from app.models.page_like import PageLike
                             like_count = db.query(PageLike).filter(PageLike.page_id == page.id).count()
-                            if like_count > 0:
-                                node["like_count"] = like_count
+                            node["like_count"] = like_count
                     except Exception as e:
                         logging.warning(f"Error getting like count for page {page.id}: {e}")
+                        node["like_count"] = 0
                     tree.append(node)
             return tree
         
@@ -252,8 +252,14 @@ def get_pages(
         
         # Debug: log page IDs and their parent_ids
         if pages:
-            page_info = [(p.id, p.title[:30], p.parent_id) for p in pages[:10]]
+            page_info = [(p.id, p.title[:30], p.parent_id, p.author_id) for p in pages[:10]]
             logging.info(f"Sample pages: {page_info}")
+        
+        # Additional verification for my_only mode
+        if current_user and my_only:
+            for node in tree:
+                if 'author_id' in node and node['author_id'] != current_user.id:
+                    logging.error(f"ERROR: Tree node {node.get('id')} has author_id {node.get('author_id')}, but current user is {current_user.id}")
         
         return tree
     except Exception as e:
@@ -266,8 +272,6 @@ def get_my_pages(
     db: Session = Depends(get_db)
 ):
     """Get only pages created by the current user in tree structure."""
-    import logging
-    from sqlalchemy.orm import joinedload
     
     logging.info(f"Getting own pages for user: {current_user.username} (id: {current_user.id})")
     
@@ -292,15 +296,15 @@ def get_my_pages(
                         "author_id": page.author_id,
                         "children": build_tree_with_likes(pages_list, page.id)
                     }
-                    # Add like count if available
+                    # Add like count (always include, even if 0)
                     try:
                         if db:
                             from app.models.page_like import PageLike
                             like_count = db.query(PageLike).filter(PageLike.page_id == page.id).count()
-                            if like_count > 0:
-                                node["like_count"] = like_count
+                            node["like_count"] = like_count
                     except Exception as e:
                         logging.warning(f"Error getting like count for page {page.id}: {e}")
+                        node["like_count"] = 0
                     tree.append(node)
             return tree
         
