@@ -58,6 +58,7 @@
   padding: 0.125rem 0.25rem;
   border-radius: 2px;
   font-size: 0.875em;
+  color: #1f2937;
 }
 
 .page-content pre {
@@ -67,6 +68,14 @@
   border-radius: 4px;
   overflow-x: auto;
   margin: 1.5rem 0;
+}
+
+.page-content pre code {
+  background: transparent;
+  padding: 0;
+  border-radius: 0;
+  color: inherit;
+  font-size: 0.875em;
 }
 
 .page-content blockquote {
