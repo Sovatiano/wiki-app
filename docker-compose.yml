@@ -1,0 +1,62 @@
+version: '3.8'
+
+services:
+  # База данных PostgreSQL
+  db:
+    image: postgres:15-alpine
+    container_name: wiki-app-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: 112233
+      POSTGRES_DB: wikiapp
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Серверная часть (FastAPI)
+  server:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    container_name: wiki-app-server
+    environment:
+      DATABASE_URL: postgresql://postgres:112233@db:5432/wikiapp
+      SECRET_KEY: your-secret-key-here-change-in-production
+      CORS_ORIGINS: http://localhost:80,http://localhost:3000,http://127.0.0.1:80,http://127.0.0.1:3000
+      DEBUG: "True"
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    # Volumes убраны для продакшн версии - код копируется в образ при сборке
+    # Для разработки используйте docker-compose.dev.yml
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+
+  # Клиентская часть (React)
+  client:
+    build:
+      context: ./client
+      dockerfile: Dockerfile
+      args:
+        VITE_API_URL: /api
+    container_name: wiki-app-client
+    ports:
+      - "80:80"
+    depends_on:
+      server:
+        condition: service_started
+
+volumes:
+  postgres_data:
